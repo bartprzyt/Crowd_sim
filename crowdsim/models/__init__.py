@@ -17,3 +17,4 @@ def create_model(name, **params):
 
 from .base import Model
 from . import simple
+from . import cellular

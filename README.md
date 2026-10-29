@@ -3,6 +3,7 @@ przykładowy scenariusz w folderze scenarios
 
 odpalenie programu python -m crowdsim --scenario <ścieżka do scenariusza> --model <nazwa modelu>
 przyklad python -m crowdsim --scenario crowdsim/data/scenarios/real_data_scenario.json --model simple
+przyklad python -m crowdsim --scenario scenarios/narrow_door.json --model cellular
 
 w jsonie na rzazie jest na 127 agentow bo nie tworzy na ten moment więcej("n": 905)
 
