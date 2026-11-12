@@ -19,3 +19,4 @@ from .base import Model
 from . import simple
 from . import cellular
 from . import social_force
+from . import social_force_2
