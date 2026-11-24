@@ -5,7 +5,7 @@ Symulator dynamiki tłumu i ewakuacji z różnymi modelami dyskretnymi i ciągł
 ## Uruchomienie programu
 
 ```bash
-python -m crowdsim --scenario <ścieżka do scenariusza> --model <nazwa modelu>
+python -m crowdsim
 ```
 
 Dostępne modele:
@@ -44,13 +44,21 @@ python -m crowdsim --scenario crowdsim/data/scenarios/real_data_scenario.json --
 6. **`scenarios/concert_stage.json`** – scena koncertowa / festiwal z dużą przeszkodą (scena) i dwoma szerokimi wyjściami bocznymi (górnym i dolnym); 60 agentów.
 
 ### Scenariusze geometrii korytarzy i przeszkód:
-7. **`scenarios/classroom_evacuation.json`** – sala wykładowa z 10 rzędami ławek, wąskimi przejściami po obu stronach i wyjściem po lewej stronie; 40 agentów.
-8. **`scenarios/corner_corridor.json`** – korytarz w kształcie litery L (zakręt 90 stopni). Wymaga omijania narożnika wewnętrznego; 30 agentów.
-9. **`scenarios/t_junction.json`** – skrzyżowanie korytarzy typu T; dwa strumienie agentów z lewej i prawej strony łączą się w jeden korytarz wyjściowy; 40 agentów.
-10. **`scenarios/hall_with_pillars.json`** – przestronny hol/stacja metra z regularną siatką filarów i szerokim wyjściem; 40 agentów.
-11. **`scenarios/room_with_obstacles.json`** – pokój z dwoma symetrycznymi blokami przeszkód; 30 agentów.
+7. **`scenarios/corner_corridor.json`** – korytarz w kształcie litery L (zakręt 90 stopni). Wymaga omijania narożnika wewnętrznego; 30 agentów.
+8. **`scenarios/t_junction.json`** – skrzyżowanie korytarzy typu T; dwa strumienie agentów z lewej i prawej strony łączą się w jeden korytarz wyjściowy; 40 agentów.
+9. **`scenarios/hall_with_pillars.json`** – przestronny hol/stacja metra z regularną siatką filarów i szerokim wyjściem; 40 agentów.
+10. **`scenarios/room_with_obstacles.json`** – pokój z dwoma symetrycznymi blokami przeszkód; 30 agentów.
+
+### Scenariusze sali wykładowej:
+7. **`scenarios/Sala_wykladowa/classroom_evacuation.json`** – Sala wykładowa z jedną kolumną ławek z 40 agentami.
+8. **`scenarios/Sala_wykladowa/Room_15rows'** – Sala wykładowa z jedną kolumną ławek z 300 agentami, 15 rzędami i 2 wyjściami.
+9. **`scenarios/Sala_wykladowa/Room_center.json`** – Sala wykładowa z dwiema kolumnami ławek i przejśceim między nimi z 300 agentami i jednym wyjściem.
+10. **`scenarios/Sala_wykladowa/Room_center2.json`** – Sala wykładowa z dwiema kolumnami ławek i przejśceim między nimi z 300 agentami i dwoma wyjściami.
+11. **`scenarios/Sala_wykladowa/Room_3_cols.json'** – Sala wykładowa z trzema kolumnami ławek z 300 agentami i jednym wyjściem.
+12. **`scenarios/Sala_wykladowa/Room_3_cols2.json'** – Sala wykładowa z trzema kolumnami ławek z 300 agentami i dwoma wyjściami.
 
 ---
+
 
 ## Dane rzeczywiste
 - `crowdsim/data/scenarios/real_data_scenario.json` – scenariusz oparty o eksperyment Jülich (https://ped.fz-juelich.de/da/doku.php?id=corridor5).

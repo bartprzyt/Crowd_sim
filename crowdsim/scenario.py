@@ -1,4 +1,3 @@
-"""Wczytywanie scenariuszy z JSON."""
 import json
 import numpy as np
 from .agent import Agent
@@ -18,20 +17,26 @@ def load_scenario(path, seed=0):
     rng = np.random.default_rng(seed)
     agents, aid = [], 0
     r = cfg.get("agent_radius", 0.25)
+    r_std = cfg.get("agent_radius_std", 0.0)
     for z in env.spawn_zones:
         placed, tries = 0, 0
         while placed < z.n and tries < z.n * 500:
             tries += 1
-            p = np.array([rng.uniform(z.x + r, z.x + z.w - r),
-                          rng.uniform(z.y + r, z.y + z.h - r)])
-            if any(np.linalg.norm(p - a.pos) < 2 * r for a in agents):
+            ri = float(np.clip(rng.normal(r, r_std), 0.8 * r, 1.2 * r)) if r_std > 0 else r
+            if z.w <= 2 * ri or z.h <= 2 * ri:
                 continue
-            if env.nearest_wall_point(p)[1] < r:
+            p = np.array([rng.uniform(z.x + ri, z.x + z.w - ri),
+                          rng.uniform(z.y + ri, z.y + z.h - ri)])
+            if any(np.linalg.norm(p - a.pos) < ri + a.radius for a in agents):
+                continue
+            if env.nearest_wall_point(p)[1] < ri:
                 continue
             ex = z.goal_exit if z.goal_exit is not None else env.nearest_exit(p)
             speed = abs(float(rng.normal(1.34, 0.26)))
             agents.append(Agent(id=aid, pos=p, goal=env.exits[ex].center.copy(),
-                                radius=r, desired_speed=max(0.5, speed)))
+                                radius=ri, desired_speed=max(0.5, speed)))
             aid += 1
             placed += 1
+        if placed < z.n:
+            print(f"[scenario] UWAGA: strefa ({z.x}, {z.y}) - umieszczono {placed}/{z.n} agentów")
     return env, agents

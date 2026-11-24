@@ -35,9 +35,13 @@ class Simulation:
         if self.logger:
             self.logger.log(self.t, self.agents)
 
-    def run(self, t_max=300.0):
+    def run(self, t_max=300.0, report_every=10.0):
+        next_report = report_every
         while not self.finished and self.t < t_max:
             self.step()
+            if self.t >= next_report:
+                print(f"t={self.t:6.1f}s  w srodku={len(self.agents)}  ewak.={len(self.evacuated)}", flush=True)
+                next_report += report_every
         return self.summary()
 
     def summary(self):
