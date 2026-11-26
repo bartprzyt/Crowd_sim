@@ -19,6 +19,8 @@ class CellularAutomatonModel(Model):
         cell_size: float = 0.4,
         ks: float = 3.0,
         kd: float = 0.0,
+        kc: float = 4.0,
+        congestion_interval: float = 0.5,
         decay: float = 0.1,
         diffusion: float = 0.05,
         friction: float = 0.0,
@@ -29,6 +31,8 @@ class CellularAutomatonModel(Model):
         :param cell_size: Rozmiar boku komórki w metrach.
         :param ks: Współczynnik czułości na pole statyczne.
         :param kd: Współczynnik czułości na pole dynamiczne (ślady pieszych).
+        :param kc: Współczynnik kary za zatłoczenie w nawigacji Dijkstry.
+        :param congestion_interval: Co ile sekund przeliczać pole z uwzględnieniem tłumu.
         :param decay: Współczynnik zaniku pola dynamicznego.
         :param diffusion: Współczynnik dyfuzji pola dynamicznego.
         :param friction: Prawdopodobieństwo zablokowania przy konflikcie o komórkę.
@@ -37,6 +41,8 @@ class CellularAutomatonModel(Model):
         self.cell_size = float(cell_size)
         self.ks = float(ks)
         self.kd = float(kd)
+        self.kc = float(kc)
+        self.congestion_interval = float(congestion_interval)
         self.decay = float(decay)
         self.diffusion = float(diffusion)
         self.friction = float(friction)
@@ -45,10 +51,17 @@ class CellularAutomatonModel(Model):
         self.cols = 0
         self.rows = 0
         self.static_field = np.empty((0, 0), dtype=float)
+        self.nav_field = np.empty((0, 0), dtype=float)
         self.dynamic_field = np.empty((0, 0), dtype=float)
         self.cell_map: dict[tuple[int, int], int] = {}
         self.current_cells: dict[int, tuple[int, int]] = {}
         self.target_cells: dict[int, tuple[int, int]] = {}
+        self._edges: dict[tuple[int, int], list[tuple[int, int, float]]] = {}
+        self._free = np.empty((0, 0), dtype=bool)
+        self._src = np.empty((0, 0), dtype=bool)
+        self._crowd_ema = np.empty((0, 0), dtype=float)
+        self._cong_timer = 0.0
+        self.nav_version = 0
 
     def _cell_center(self, r: int, c: int) -> np.ndarray:
         """Zwraca współrzędne ciągłe środka komórki (r, c)."""
@@ -142,7 +155,32 @@ class CellularAutomatonModel(Model):
         min_radius = min((a.radius for a in agents), default=0.2)
         clearance = min_radius * 0.95
         self.static_field = self._build_static_field(env, clearance)
+        self.nav_field = self.static_field.copy()
         self.dynamic_field = np.zeros((self.rows, self.cols), dtype=float)
+        self._free = np.isfinite(self.static_field)
+        self._src = self.static_field == 0.0
+        self._crowd_ema = np.zeros((self.rows, self.cols), dtype=float)
+        self._cong_timer = 0.0
+        self.nav_version += 1
+
+        self._edges = {}
+        for r in range(self.rows):
+            for c in range(self.cols):
+                if not self._free[r, c]:
+                    continue
+                p1 = self._cell_center(r, c)
+                nbrs = []
+                for dr in (-1, 0, 1):
+                    for dc in (-1, 0, 1):
+                        if dr == 0 and dc == 0:
+                            continue
+                        nr, nc = r + dr, c + dc
+                        if 0 <= nr < self.rows and 0 <= nc < self.cols and self._free[nr, nc]:
+                            p2 = self._cell_center(nr, nc)
+                            if not self._is_transition_blocked(p1, p2, env.walls):
+                                nbrs.append((nr, nc, float(np.hypot(dr * self.cell_size, dc * self.cell_size))))
+                self._edges[(r, c)] = nbrs
+
         self.cell_map.clear()
         self.current_cells.clear()
         self.target_cells.clear()
@@ -154,6 +192,52 @@ class CellularAutomatonModel(Model):
             self.current_cells[a.id] = (fr, fc)
             self.target_cells[a.id] = (fr, fc)
             a.pos = self._cell_center(fr, fc)
+
+    def _rebuild_nav_field(self, agents) -> None:
+        """Przelicza pole nawigacyjne Dijkstry z karą za lokalne zatłoczenie."""
+        occ = np.zeros((self.rows, self.cols), dtype=float)
+        by_id = {a.id: a for a in agents}
+        for (r, c), aid in self.cell_map.items():
+            ag = by_id.get(aid)
+            w = 1.0 if (ag is None or ag.speed < 0.25 * ag.desired_speed) else 0.4
+            occ[r, c] = w
+
+        g = occ.copy()
+        link_v = self._free[:-1, :] & self._free[1:, :]
+        link_h = self._free[:, :-1] & self._free[:, 1:]
+        for _ in range(3):
+            fv = 0.22 * (g[:-1, :] - g[1:, :]) * link_v
+            g[:-1, :] -= fv
+            g[1:, :] += fv
+            fh = 0.22 * (g[:, :-1] - g[:, 1:]) * link_h
+            g[:, :-1] -= fh
+            g[:, 1:] += fh
+
+        self._crowd_ema = 0.45 * g + 0.55 * self._crowd_ema
+        cost = 1.0 + self.kc * np.clip(self._crowd_ema, 0.0, 2.0)
+        cost[self._src] = 1.0
+
+        nf = np.full((self.rows, self.cols), np.inf, dtype=float)
+        pq: list[tuple[float, int, int]] = []
+        for r, c in zip(*np.nonzero(self._src)):
+            nf[r, c] = 0.0
+            pq.append((0.0, int(r), int(c)))
+        heapq.heapify(pq)
+        edges = self._edges
+
+        while pq:
+            d, r, c = heapq.heappop(pq)
+            if d > nf[r, c]:
+                continue
+            c0 = cost[r, c]
+            for nr, nc, step_dist in edges.get((r, c), ()):
+                nd = d + step_dist * 0.5 * (c0 + cost[nr, nc])
+                if nd < nf[nr, nc]:
+                    nf[nr, nc] = nd
+                    heapq.heappush(pq, (nd, nr, nc))
+
+        self.nav_field = nf
+        self.nav_version += 1
 
     def _update_dynamic_field(self):
         """Aktualizuje pole dynamiczne: dyfuzja do sąsiadów i wykładniczy zanik."""
@@ -198,27 +282,18 @@ class CellularAutomatonModel(Model):
             if curr == target:
                 if self.static_field[curr] > 0.0:
                     r, c = curr
-                    p1 = self._cell_center(r, c)
                     best_cell = None
                     best_score = 0.0
 
-                    for dr in (-1, 0, 1):
-                        for dc in (-1, 0, 1):
-                            if dr == 0 and dc == 0:
-                                continue
-                            nr, nc = r + dr, c + dc
-                            if 0 <= nr < self.rows and 0 <= nc < self.cols:
-                                if np.isfinite(self.static_field[nr, nc]) and (nr, nc) not in self.cell_map:
-                                    p2 = self._cell_center(nr, nc)
-                                    if not self._is_transition_blocked(p1, p2, env.walls):
-                                        step_len = float(np.hypot(dr * self.cell_size, dc * self.cell_size))
-                                        grad = (self.static_field[r, c] - self.static_field[nr, nc]) / step_len
-                                        if grad > 0.0:
-                                            d_val = self.dynamic_field[nr, nc] if self.kd > 0.0 else 0.0
-                                            score = grad + self.kd * d_val
-                                            if score > best_score:
-                                                best_score = score
-                                                best_cell = (nr, nc)
+                    for nr, nc, step_len in self._edges.get((r, c), ()):
+                        if (nr, nc) not in self.cell_map:
+                            grad = (self.nav_field[r, c] - self.nav_field[nr, nc]) / step_len
+                            if grad > 0.0:
+                                d_val = self.dynamic_field[nr, nc] if self.kd > 0.0 else 0.0
+                                score = grad + self.kd * d_val
+                                if score > best_score:
+                                    best_score = score
+                                    best_cell = (nr, nc)
 
                     if best_cell is not None:
                         proposals[best_cell].append((best_score, a))
@@ -268,3 +343,9 @@ class CellularAutomatonModel(Model):
                 a.vel = np.zeros(2, dtype=float)
 
             env.resolve_wall_penetration(a)
+
+        if self.kc > 0.0 and agents:
+            self._cong_timer += dt
+            if self._cong_timer >= self.congestion_interval:
+                self._cong_timer = 0.0
+                self._rebuild_nav_field(agents)

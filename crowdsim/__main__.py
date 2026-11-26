@@ -27,6 +27,11 @@ def main():
     ap.add_argument("--params-file", default=None, help="plik JSON z parametrami modelu")
     a = ap.parse_args()
 
+    if a.gui:
+        from .gui import launch_gui
+        launch_gui()
+        return
+
     with open(a.scenario, encoding="utf-8") as f:
         params = dict(json.load(f).get("model_params", {}).get(a.model, {}))
     if a.params_file:

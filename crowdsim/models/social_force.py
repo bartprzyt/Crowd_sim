@@ -15,6 +15,23 @@ class SocialForceModel(Model):
     repulsion_strength = 2.1
     repulsion_range = 0.3
 
+    def __init__(
+        self,
+        relaxation_time: float = 0.5,
+        repulsion_strength: float = 2.1,
+        repulsion_range: float = 0.3,
+        **params,
+    ):
+        super().__init__(
+            relaxation_time=relaxation_time,
+            repulsion_strength=repulsion_strength,
+            repulsion_range=repulsion_range,
+            **params,
+        )
+        self.relaxation_time = float(relaxation_time)
+        self.repulsion_strength = float(repulsion_strength)
+        self.repulsion_range = float(repulsion_range)
+
     def step(self, agents, env, dt: float) -> None:
         positions = [agent.pos.copy() for agent in agents]
         velocities = [agent.vel.copy() for agent in agents]

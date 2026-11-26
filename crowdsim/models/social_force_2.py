@@ -44,7 +44,45 @@ class _NavField:
         src = dexit <= 0.75 * cell + 1e-9
         free = free | src
 
+        self.free = free
+        self.src = src
+        self.base_cost = self.cost.copy()
+        self._crowd_ema = np.zeros((self.ny, self.nx), dtype=float)
         self.dist = self._dijkstra(free, src, self.cost)
+        self.dir = self._direction_field(self.dist)
+
+    @staticmethod
+    def _diffuse_neumann(grid, free, steps, rate=0.22):
+        g = grid.copy()
+        link_v = free[:-1, :] & free[1:, :]
+        link_h = free[:, :-1] & free[:, 1:]
+        for _ in range(steps):
+            fv = rate * (g[:-1, :] - g[1:, :]) * link_v
+            g[:-1, :] -= fv
+            g[1:, :] += fv
+            fh = rate * (g[:, :-1] - g[:, 1:]) * link_h
+            g[:, :-1] -= fh
+            g[:, 1:] += fh
+        return g
+
+    def update_congestion(self, P, V, V0, r_mean, weight=4.0, ema=0.45):
+        occ = np.zeros((self.ny, self.nx), dtype=float)
+        if len(P) > 0:
+            sp = np.linalg.norm(V, axis=1)
+            slow = 1.0 - np.clip(sp / np.maximum(V0, 1e-6), 0.0, 1.0)
+            w = 0.35 + 0.65 * slow
+            ix = np.clip((P[:, 0] / self.h).astype(int), 0, self.nx - 1)
+            iy = np.clip((P[:, 1] / self.h).astype(int), 0, self.ny - 1)
+            np.add.at(occ, (iy, ix), w)
+        occ /= (self.h * self.h)
+        steps = max(4, min(40, int(round((0.45 / self.h) ** 2 / 0.45))))
+        dens = self._diffuse_neumann(occ, self.free, steps=steps, rate=0.22)
+        self._crowd_ema = ema * dens + (1.0 - ema) * self._crowd_ema
+        dens_ref = 1.0 / max((2.0 * r_mean) ** 2 * 2.5, 0.1)
+        cong = np.clip(self._crowd_ema / dens_ref, 0.0, 2.5)
+        cong[self.src] = 0.0
+        self.cost = self.base_cost + weight * cong
+        self.dist = self._dijkstra(self.free, self.src, self.cost)
         self.dir = self._direction_field(self.dist)
 
     def _dijkstra(self, free, src, cost):
@@ -149,6 +187,7 @@ class SocialForceModel(Model):
                  use_navigation=True,
                  nav_cell=0.2, nav_clearance=0.1,
                  nav_wall_pref=0.4, nav_wall_weight=4.0,
+                 congestion_weight=4.0, congestion_interval=0.5, congestion_ema=0.45,
                  seed=0, **kw):
         super().__init__(relaxation_time=relaxation_time, repulsion_strength=repulsion_strength,
                          repulsion_range=repulsion_range, **kw)
@@ -163,13 +202,22 @@ class SocialForceModel(Model):
         self.wall_velocity_fix = wall_velocity_fix
         self.nav_cell, self.nav_clearance = nav_cell, nav_clearance
         self.nav_wall_pref, self.nav_wall_weight = nav_wall_pref, nav_wall_weight
+        self.congestion_weight = float(congestion_weight)
+        self.congestion_interval = float(congestion_interval)
+        self.congestion_ema = float(congestion_ema)
         self.rng = np.random.default_rng(seed)
         self._fields = {}
         self._wall_env = None
+        self._cong_timer = 0.0
+        self._r_mean = 0.2
+        self.nav_version = 0
 
     def reset(self, agents, env):
         self._fields = {}
         self._wall_env = None
+        self._cong_timer = 0.0
+        self._r_mean = float(np.mean([a.radius for a in agents])) if agents else 0.2
+        self.nav_version += 1
         if not (self.use_navigation and getattr(env, "exits", None)) or not agents:
             return
         # komórka siatki nie może być grubsza niż pół promienia agenta - inaczej wąskie
@@ -348,3 +396,16 @@ class SocialForceModel(Model):
 
         for i, ag in enumerate(agents):
             ag.pos, ag.vel = P[i].copy(), V[i].copy()
+
+        if self.use_navigation and self.congestion_weight > 0.0 and self._fields:
+            self._cong_timer += dt
+            if self._cong_timer >= self.congestion_interval:
+                self._cong_timer = 0.0
+                for field in self._fields.values():
+                    if field is not None:
+                        field.update_congestion(
+                            P, V, V0, self._r_mean,
+                            weight=self.congestion_weight,
+                            ema=self.congestion_ema,
+                        )
+                self.nav_version += 1
